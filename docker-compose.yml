@@ -1,0 +1,23 @@
+services:
+  csrnet-finetune:
+    image: ${CSRNET_FINETUNE_IMAGE:-ghcr.io/jimizhou/csrnet-finetune-docker:latest}
+    container_name: csrnet-finetune
+    restart: unless-stopped
+    ports:
+      - "${CSRNET_FINETUNE_PORT:-7860}:7860"
+    shm_size: ${CSRNET_FINETUNE_SHM_SIZE:-8g}
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_PORT: 7860
+      APP_DATA_DIR: /app/data/jobs
+    volumes:
+      - ./data:/app/data
+      - ${RAW_IMAGES_HOST_DIR:?set RAW_IMAGES_HOST_DIR in .env or shell}:/raw_images:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+

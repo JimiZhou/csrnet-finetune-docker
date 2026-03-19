@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CSRNet Finetune Docker</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Museum Crowd Count Fine-tuning</p>
+          <h1>CSRNet Docker Trainer</h1>
+          <p class="lede">
+            上传 CVAT Datumaro 标注包和原图压缩包，后台自动构建数据集并执行微调训练。
+          </p>
+        </div>
+        <div class="hero-note">
+          <p>适合不懂部署的使用者：</p>
+          <ul>
+            <li>上传标注 zip</li>
+            <li>上传 raw images 压缩包</li>
+            <li>可选上传初始化权重</li>
+            <li>自动查看训练日志与模型产物</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="panel upload-panel">
+        <div class="panel-head">
+          <h2>创建训练任务</h2>
+          <p>推荐上传 CVAT Datumaro 1.0 标注 zip 与包含原图目录的 zip/tar.gz。</p>
+        </div>
+        <form id="train-form" class="train-form">
+          <label>
+            <span>任务名称</span>
+            <input type="text" name="name" placeholder="例如：museum-perspective-v1" />
+          </label>
+
+          <label>
+            <span>标注 zip</span>
+            <input type="file" name="annotations_zip" accept=".zip" required />
+          </label>
+
+          <label>
+            <span>Raw Images 挂载路径</span>
+            <input type="text" name="raw_images_dir" placeholder="/raw_images 或 /data/raw_images" required />
+          </label>
+
+          <label>
+            <span>初始化权重（可选）</span>
+            <input type="file" name="init_weights" accept=".pth,.pt,.pth.tar" />
+          </label>
+
+          <details class="advanced">
+            <summary>高级训练参数</summary>
+            <div class="grid">
+              <label><span>epochs</span><input name="epochs" type="number" value="40" /></label>
+              <label><span>batch_size</span><input name="batch_size" type="number" value="2" /></label>
+              <label><span>train_h</span><input name="train_h" type="number" value="544" /></label>
+              <label><span>train_w</span><input name="train_w" type="number" value="960" /></label>
+              <label><span>lr</span><input name="lr" type="text" value="3e-6" /></label>
+              <label><span>freeze_frontend_epochs</span><input name="freeze_frontend_epochs" type="number" value="0" /></label>
+              <label><span>perspective_top_scale</span><input name="perspective_top_scale" type="text" value="0.9" /></label>
+              <label><span>perspective_bottom_scale</span><input name="perspective_bottom_scale" type="text" value="1.8" /></label>
+              <label><span>perspective_gamma</span><input name="perspective_gamma" type="text" value="1.4" /></label>
+              <label><span>loss_top_scale</span><input name="loss_top_scale" type="text" value="1.0" /></label>
+              <label><span>loss_bottom_scale</span><input name="loss_bottom_scale" type="text" value="1.3" /></label>
+              <label><span>loss_gamma</span><input name="loss_gamma" type="text" value="1.2" /></label>
+              <label><span>num_workers</span><input name="num_workers" type="number" value="2" /></label>
+            </div>
+          </details>
+
+          <div class="actions">
+            <button type="submit">开始训练</button>
+            <p id="form-status"></p>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel jobs-panel">
+        <div class="panel-head">
+          <h2>任务列表</h2>
+          <p>点击任务即可查看日志和下载训练结果。</p>
+        </div>
+        <div id="jobs" class="jobs"></div>
+      </section>
+    </main>
+
+    <script>
+      const jobsEl = document.getElementById("jobs");
+      const form = document.getElementById("train-form");
+      const formStatus = document.getElementById("form-status");
+      let selectedJobId = null;
+
+      async function fetchJobs() {
+        const resp = await fetch("/api/jobs");
+        const data = await resp.json();
+        renderJobs(data.jobs || []);
+      }
+
+      async function fetchJob(jobId) {
+        const resp = await fetch(`/api/jobs/${jobId}`);
+        return await resp.json();
+      }
+
+      function statusClass(status) {
+        return `status status-${status || "unknown"}`;
+      }
+
+      function renderJobs(jobs) {
+        jobsEl.innerHTML = "";
+        if (!jobs.length) {
+          jobsEl.innerHTML = `<div class="empty">还没有训练任务</div>`;
+          return;
+        }
+
+        jobs.forEach((job) => {
+          const card = document.createElement("article");
+          card.className = "job-card";
+          card.innerHTML = `
+            <header>
+              <div>
+                <h3>${job.name}</h3>
+                <p>${job.id}</p>
+              </div>
+              <span class="${statusClass(job.status)}">${job.status}</span>
+            </header>
+            <div class="job-meta">
+              <span>phase: ${job.phase}</span>
+              <span>progress: ${job.progress}%</span>
+            </div>
+            <pre class="log-placeholder">点击加载日志</pre>
+            <div class="job-actions">
+              <button data-job="${job.id}" class="view-btn">查看日志</button>
+              ${job.status === "completed" ? `<a href="/api/jobs/${job.id}/download?kind=best">下载 best</a><a href="/api/jobs/${job.id}/download?kind=production">下载 production</a>` : ""}
+            </div>
+          `;
+          jobsEl.appendChild(card);
+        });
+
+        document.querySelectorAll(".view-btn").forEach((btn) => {
+          btn.onclick = async () => {
+            selectedJobId = btn.dataset.job;
+            const job = await fetchJob(selectedJobId);
+            btn.closest(".job-card").querySelector(".log-placeholder").textContent =
+              job.log_tail || "(暂无日志)";
+          };
+        });
+      }
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        formStatus.textContent = "正在上传并创建任务...";
+        const formData = new FormData(form);
+        const resp = await fetch("/api/jobs", { method: "POST", body: formData });
+        const data = await resp.json();
+        if (!resp.ok) {
+          formStatus.textContent = data.detail || data.error || "创建失败";
+          return;
+        }
+        formStatus.textContent = `任务已创建：${data.job.id}`;
+        form.reset();
+        fetchJobs();
+      });
+
+      setInterval(async () => {
+        await fetchJobs();
+        if (selectedJobId) {
+          const job = await fetchJob(selectedJobId);
+          const cards = [...document.querySelectorAll(".job-card")];
+          const target = cards.find((card) => card.innerHTML.includes(selectedJobId));
+          if (target) {
+            target.querySelector(".log-placeholder").textContent = job.log_tail || "(暂无日志)";
+          }
+        }
+      }, 5000);
+
+      fetchJobs();
+    </script>
+  </body>
+</html>
