@@ -6,6 +6,7 @@
 - 提供基础 WebUI
 - 上传 `CVAT Datumaro 标注 zip`
 - 原图通过 Docker volume 挂载到容器内目录
+- 初始化权重通过 Docker volume 挂载到容器内目录
 - 后台自动构建数据集并训练
 - 适合放进有 NVIDIA GPU 的 Docker 环境中运行
 
@@ -121,4 +122,4 @@ data/jobs/<job_id>/
 
 - 当前版本是基础 MVP，优先保证能上传、构建、训练、看日志。
 - 训练默认带透视感知参数，适合博物馆斜视角近大远小场景。
-- 建议初始化权重使用已有的 `csrnet_production.pth` 或 `shanghai_a.pth`。
+- 如果通过 Cloudflare Tunnel 使用，建议只上传标注 zip，其余资源都走挂载。
