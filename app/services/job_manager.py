@@ -58,7 +58,16 @@ class JobManager:
         text = log_path.read_text(encoding="utf-8", errors="ignore")
         return text[-max_chars:]
 
-    def create_job(self, *, name: str, annotation_zip, raw_images_dir: str, init_weights, params: Dict[str, Any]) -> Dict[str, Any]:
+    def create_job(
+        self,
+        *,
+        name: str,
+        annotation_zip,
+        raw_images_dir: str,
+        init_weights,
+        init_weights_path: str,
+        params: Dict[str, Any],
+    ) -> Dict[str, Any]:
         job_id = datetime.now().strftime("%Y%m%d_%H%M%S_") + uuid.uuid4().hex[:8]
         job_dir = self.jobs_root / job_id
         uploads_dir = job_dir / "uploads"
@@ -70,6 +79,9 @@ class JobManager:
         ann_path.write_bytes(annotation_zip.file.read())
 
         init_path = None
+        init_weights_path = (init_weights_path or "").strip()
+        if init_weights_path:
+            init_path = Path(init_weights_path)
         if init_weights and getattr(init_weights, "filename", ""):
             init_path = uploads_dir / init_weights.filename
             init_path.write_bytes(init_weights.file.read())
@@ -139,6 +151,10 @@ class JobManager:
             raise FileNotFoundError(f"Mounted raw images dir not found: {raw_images_dir}")
         if not raw_images_dir.is_dir():
             raise NotADirectoryError(f"Mounted raw images path is not a directory: {raw_images_dir}")
+        if job["init_weights"]:
+            init_weights_path = Path(str(job["init_weights"]))
+            if not init_weights_path.exists():
+                raise FileNotFoundError(f"Init weights path not found: {init_weights_path}")
 
         self._update_job(job_id, status="running", phase="building_dataset", progress=15)
         log("Building dataset from CVAT Datumaro zip...")

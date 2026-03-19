@@ -10,9 +10,12 @@ services:
       APP_HOST: 0.0.0.0
       APP_PORT: 7860
       APP_DATA_DIR: /app/data/jobs
+      APP_RAW_IMAGES_DIR: /raw_images
+      APP_WEIGHTS_DIR: /weights
     volumes:
       - ./data:/app/data
       - ${RAW_IMAGES_HOST_DIR:?set RAW_IMAGES_HOST_DIR in .env or shell}:/raw_images:ro
+      - ${WEIGHTS_HOST_DIR:?set WEIGHTS_HOST_DIR in .env or shell}:/weights:ro
     deploy:
       resources:
         reservations:
@@ -20,4 +23,3 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-

@@ -13,24 +13,51 @@
           <p class="eyebrow">Museum Crowd Count Fine-tuning</p>
           <h1>CSRNet Docker Trainer</h1>
           <p class="lede">
-            上传 CVAT Datumaro 标注包和原图压缩包，后台自动构建数据集并执行微调训练。
+            上传 CVAT Datumaro 标注包，原图和初始化权重从已挂载目录中选择，后台自动构建数据集并执行微调训练。
           </p>
         </div>
         <div class="hero-note">
           <p>适合不懂部署的使用者：</p>
           <ul>
             <li>上传标注 zip</li>
-            <li>上传 raw images 压缩包</li>
-            <li>可选上传初始化权重</li>
-            <li>自动查看训练日志与模型产物</li>
+            <li>原图由运维预先挂载</li>
+            <li>初始化权重从挂载目录中选择</li>
+            <li>自动查看实时日志与模型产物</li>
           </ul>
+        </div>
+      </section>
+
+      <section class="panel system-panel">
+        <div class="panel-head">
+          <h2>系统状态</h2>
+          <p>显示 GPU 状态、已挂载原图与可用初始化权重。</p>
+        </div>
+        <div id="gpu-status" class="gpu-status">加载中...</div>
+      </section>
+
+      <section class="panel mounted-panel">
+        <div class="panel-head">
+          <h2>已挂载资源</h2>
+          <p>用户不需要手输路径，只需要确认挂载内容并选择基础权重。</p>
+        </div>
+        <div class="mounted-grid">
+          <div class="mounted-card">
+            <h3>Raw Images</h3>
+            <p id="raw-meta">加载中...</p>
+            <div id="raw-previews" class="raw-previews"></div>
+          </div>
+          <div class="mounted-card">
+            <h3>初始化权重</h3>
+            <p id="weights-meta">加载中...</p>
+            <ul id="weights-list" class="weights-list"></ul>
+          </div>
         </div>
       </section>
 
       <section class="panel upload-panel">
         <div class="panel-head">
           <h2>创建训练任务</h2>
-          <p>推荐上传 CVAT Datumaro 1.0 标注 zip 与包含原图目录的 zip/tar.gz。</p>
+          <p>只上传 CVAT Datumaro 1.0 标注 zip；原图目录和基础权重由挂载资源决定。</p>
         </div>
         <form id="train-form" class="train-form">
           <label>
@@ -44,13 +71,10 @@
           </label>
 
           <label>
-            <span>Raw Images 挂载路径</span>
-            <input type="text" name="raw_images_dir" placeholder="/raw_images 或 /data/raw_images" required />
-          </label>
-
-          <label>
-            <span>初始化权重（可选）</span>
-            <input type="file" name="init_weights" accept=".pth,.pt,.pth.tar" />
+            <span>初始化权重</span>
+            <select id="init_weights_name" name="init_weights_name">
+              <option value="">不使用额外权重</option>
+            </select>
           </label>
 
           <details class="advanced">
@@ -82,7 +106,7 @@
       <section class="panel jobs-panel">
         <div class="panel-head">
           <h2>任务列表</h2>
-          <p>点击任务即可查看日志和下载训练结果。</p>
+          <p>点击任务即可查看实时日志、训练效果总结和下载新的权重。</p>
         </div>
         <div id="jobs" class="jobs"></div>
       </section>
@@ -92,16 +116,89 @@
       const jobsEl = document.getElementById("jobs");
       const form = document.getElementById("train-form");
       const formStatus = document.getElementById("form-status");
+      const rawMetaEl = document.getElementById("raw-meta");
+      const rawPreviewsEl = document.getElementById("raw-previews");
+      const weightsMetaEl = document.getElementById("weights-meta");
+      const weightsListEl = document.getElementById("weights-list");
+      const weightsSelectEl = document.getElementById("init_weights_name");
+      const gpuStatusEl = document.getElementById("gpu-status");
       let selectedJobId = null;
+      let selectedJobLog = "";
+
+      function renderMounted(data) {
+        rawMetaEl.textContent = data.raw_images_ready
+          ? `目录：${data.raw_images_dir}，共 ${data.raw_images_count} 张图片`
+          : `原图目录不可用：${data.raw_images_dir}`;
+
+        rawPreviewsEl.innerHTML = "";
+        (data.raw_images_previews || []).forEach((item) => {
+          const card = document.createElement("figure");
+          card.className = "preview-card";
+          card.innerHTML = `
+            <img src="${item.preview_url}" alt="${item.name}" loading="lazy" />
+            <figcaption>${item.relative_path}</figcaption>
+          `;
+          rawPreviewsEl.appendChild(card);
+        });
+
+        weightsMetaEl.textContent = data.weights_ready
+          ? `目录：${data.weights_dir}，共 ${data.weights.length} 个权重`
+          : `权重目录不可用：${data.weights_dir}`;
+
+        weightsListEl.innerHTML = "";
+        weightsSelectEl.innerHTML = `<option value="">不使用额外权重</option>`;
+        (data.weights || []).forEach((item) => {
+          const li = document.createElement("li");
+          li.textContent = item.name;
+          weightsListEl.appendChild(li);
+
+          const opt = document.createElement("option");
+          opt.value = item.name;
+          opt.textContent = item.name;
+          weightsSelectEl.appendChild(opt);
+        });
+      }
+
+      function renderSystem(data) {
+        const gpu = data.gpu || {};
+        const mounted = data.mounted || {};
+        renderMounted(mounted);
+
+        if (!gpu.available) {
+          gpuStatusEl.textContent = `GPU 不可用：${gpu.error || "未检测到 nvidia-smi"}`;
+          return;
+        }
+
+        gpuStatusEl.innerHTML = (gpu.gpus || []).map((item) => `
+          <article class="gpu-card">
+            <h3>${item.name}</h3>
+            <p>显存：${item.memory_used_mb} / ${item.memory_total_mb} MB</p>
+            <p>利用率：${item.utilization_gpu_percent}%</p>
+            <p>温度：${item.temperature_c}°C</p>
+          </article>
+        `).join("");
+      }
+
+      async function fetchSystem() {
+        const resp = await fetch("/api/system");
+        if (!resp.ok) return;
+        const data = await resp.json();
+        renderSystem(data);
+      }
 
       async function fetchJobs() {
         const resp = await fetch("/api/jobs");
+        if (!resp.ok) return;
         const data = await resp.json();
         renderJobs(data.jobs || []);
       }
 
       async function fetchJob(jobId) {
         const resp = await fetch(`/api/jobs/${jobId}`);
+        if (!resp.ok) {
+          const text = await resp.text();
+          throw new Error(text || `HTTP ${resp.status}`);
+        }
         return await resp.json();
       }
 
@@ -117,6 +214,7 @@
         }
 
         jobs.forEach((job) => {
+          const summary = job.result?.summary;
           const card = document.createElement("article");
           card.className = "job-card";
           card.innerHTML = `
@@ -131,9 +229,17 @@
               <span>phase: ${job.phase}</span>
               <span>progress: ${job.progress}%</span>
             </div>
-            <pre class="log-placeholder">点击加载日志</pre>
+            ${summary ? `
+              <div class="summary-box">
+                <strong>训练效果总结</strong>
+                <p>best MAE: ${Number(summary.best_mae).toFixed(3)}</p>
+                <p>best RMSE: ${Number(summary.best_rmse).toFixed(3)}</p>
+                <p>输出权重: ${summary.best_checkpoint}</p>
+              </div>
+            ` : ""}
+            <pre class="log-placeholder">${job.id === selectedJobId ? (selectedJobLog || "日志加载中...") : "点击查看日志"}</pre>
             <div class="job-actions">
-              <button data-job="${job.id}" class="view-btn">查看日志</button>
+              <button data-job="${job.id}" class="view-btn">${job.id === selectedJobId ? "刷新日志" : "查看日志"}</button>
               ${job.status === "completed" ? `<a href="/api/jobs/${job.id}/download?kind=best">下载 best</a><a href="/api/jobs/${job.id}/download?kind=production">下载 production</a>` : ""}
             </div>
           `;
@@ -144,8 +250,8 @@
           btn.onclick = async () => {
             selectedJobId = btn.dataset.job;
             const job = await fetchJob(selectedJobId);
-            btn.closest(".job-card").querySelector(".log-placeholder").textContent =
-              job.log_tail || "(暂无日志)";
+            selectedJobLog = job.log_tail || "(暂无日志)";
+            renderJobs(jobs);
           };
         });
       }
@@ -154,29 +260,42 @@
         event.preventDefault();
         formStatus.textContent = "正在上传并创建任务...";
         const formData = new FormData(form);
-        const resp = await fetch("/api/jobs", { method: "POST", body: formData });
-        const data = await resp.json();
-        if (!resp.ok) {
-          formStatus.textContent = data.detail || data.error || "创建失败";
-          return;
+        try {
+          const resp = await fetch("/api/jobs", { method: "POST", body: formData });
+          const contentType = resp.headers.get("content-type") || "";
+          const body = contentType.includes("application/json") ? await resp.json() : await resp.text();
+          if (!resp.ok) {
+            if (typeof body === "string") {
+              formStatus.textContent = `创建失败：HTTP ${resp.status}`;
+            } else {
+              formStatus.textContent = body.detail || body.error || "创建失败";
+            }
+            return;
+          }
+          formStatus.textContent = `任务已创建：${body.job.id}`;
+          form.reset();
+          await fetchSystem();
+          await fetchJobs();
+        } catch (error) {
+          formStatus.textContent = `创建失败：${error.message || error}`;
         }
-        formStatus.textContent = `任务已创建：${data.job.id}`;
-        form.reset();
-        fetchJobs();
       });
 
       setInterval(async () => {
-        await fetchJobs();
-        if (selectedJobId) {
-          const job = await fetchJob(selectedJobId);
-          const cards = [...document.querySelectorAll(".job-card")];
-          const target = cards.find((card) => card.innerHTML.includes(selectedJobId));
-          if (target) {
-            target.querySelector(".log-placeholder").textContent = job.log_tail || "(暂无日志)";
+        try {
+          await fetchSystem();
+          await fetchJobs();
+          if (selectedJobId) {
+            const job = await fetchJob(selectedJobId);
+            selectedJobLog = job.log_tail || "(暂无日志)";
+            await fetchJobs();
           }
+        } catch (_error) {
+          // ignore transient tunnel/proxy errors during polling
         }
       }, 5000);
 
+      fetchSystem();
       fetchJobs();
     </script>
   </body>

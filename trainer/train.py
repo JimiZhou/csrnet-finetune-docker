@@ -529,6 +529,20 @@ def run_training(config: TrainConfig, log_fn=print) -> Dict[str, object]:
         'best_checkpoint': str(config.out),
         'best_mae': float(best_mae),
         'best_metrics': best_metrics,
+        'summary': {
+            'best_checkpoint': str(config.out),
+            'best_mae': float(best_mae),
+            'best_rmse': float(best_metrics.get('rmse', float('nan'))) if best_metrics else float('nan'),
+            'epochs': int(config.epochs),
+            'batch_size': int(config.batch_size),
+            'train_h': int(config.train_h),
+            'train_w': int(config.train_w),
+            'lr': float(config.lr),
+            'perspective_top_scale': float(config.perspective_top_scale),
+            'perspective_bottom_scale': float(config.perspective_bottom_scale),
+            'loss_top_scale': float(config.loss_top_scale),
+            'loss_bottom_scale': float(config.loss_bottom_scale),
+        },
     }
 
 
@@ -576,4 +590,3 @@ def parse_args() -> TrainConfig:
 
 if __name__ == '__main__':
     run_training(parse_args())
-

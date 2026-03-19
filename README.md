@@ -12,10 +12,11 @@
 ## 当前能力
 
 - 上传 `annotations zip`
-- 在 WebUI 中填写 `raw images` 的容器内挂载路径
-- 可选上传初始化权重 `.pth`
+- 自动展示已挂载原图目录的图片数量与预览
+- 自动列出已挂载的初始化权重，直接选择
 - 支持透视感知训练参数
-- 页面可查看任务状态、日志、产物下载
+- 页面可实时查看任务状态、训练日志、训练效果总结与权重下载
+- 页面显示 GPU 名称、显存占用、利用率、温度
 
 ## 运行方式
 
@@ -26,6 +27,9 @@ docker run --gpus all --shm-size=8g \
   -p 7860:7860 \
   -v $(pwd)/data:/app/data \
   -v /your/raw/images:/raw_images:ro \
+  -v /your/model/weights:/weights:ro \
+  -e APP_RAW_IMAGES_DIR=/raw_images \
+  -e APP_WEIGHTS_DIR=/weights \
   csrnet-finetune:latest
 ```
 
@@ -47,7 +51,7 @@ ghcr.io/<github-user-or-org>/csrnet-finetune-docker:latest
 
 ```bash
 cp .env.example .env
-# 编辑 .env，至少填 RAW_IMAGES_HOST_DIR
+# 编辑 .env，至少填 RAW_IMAGES_HOST_DIR 和 WEIGHTS_HOST_DIR
 docker compose up -d
 ```
 
@@ -88,13 +92,17 @@ raw_images/
 -v /your/raw/images:/raw_images:ro
 ```
 
-然后在 WebUI 里填写：
+训练时会递归搜索图片文件，所以 `default/` 这种结构是支持的。
 
-```text
-/raw_images
+### 3. 初始化权重
+
+推荐把可选的基础权重也挂载进容器，例如：
+
+```bash
+-v /your/model/weights:/weights:ro
 ```
 
-训练时会递归搜索图片文件，所以 `default/` 这种结构是支持的。
+页面会自动列出 `/weights` 下的 `.pth/.pt/.pth.tar`，用户直接选择即可。
 
 ## 目录结构
 

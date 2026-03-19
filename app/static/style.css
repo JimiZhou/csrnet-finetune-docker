@@ -5,13 +5,13 @@
   --muted: #6e756e;
   --line: #d5cec0;
   --accent: #9f4d2f;
-  --accent-soft: #e7c7b3;
   --success: #275b3f;
   --warn: #8f5b16;
   --danger: #8f2f2f;
 }
 
 * { box-sizing: border-box; }
+
 body {
   margin: 0;
   background:
@@ -48,11 +48,13 @@ body {
 h1, h2, h3 { margin: 0; }
 h1 { font-size: clamp(34px, 5vw, 64px); line-height: 0.95; }
 .lede { max-width: 48rem; color: var(--muted); font-size: 16px; line-height: 1.6; }
+
 .hero-note {
   padding: 16px;
   background: linear-gradient(180deg, #efe6d8, #f7f1e6);
   border-left: 6px solid var(--accent);
 }
+
 .hero-note ul { margin: 10px 0 0 18px; padding: 0; color: var(--muted); }
 
 .panel {
@@ -63,6 +65,56 @@ h1 { font-size: clamp(34px, 5vw, 64px); line-height: 0.95; }
 }
 
 .panel-head p { color: var(--muted); margin: 8px 0 0; }
+
+.mounted-grid,
+.gpu-status {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.mounted-card,
+.gpu-card,
+.summary-box {
+  border: 1px solid var(--line);
+  padding: 16px;
+  background: #fcfaf5;
+}
+
+.raw-previews {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.preview-card {
+  margin: 0;
+  border: 1px solid var(--line);
+  background: white;
+}
+
+.preview-card img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+}
+
+.preview-card figcaption {
+  padding: 8px;
+  font-size: 11px;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.weights-list {
+  margin: 12px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+}
+
 .train-form {
   display: grid;
   gap: 16px;
@@ -77,7 +129,7 @@ label span, summary {
   color: var(--muted);
 }
 
-input[type="text"], input[type="number"], input[type="file"] {
+input[type="text"], input[type="number"], input[type="file"], select {
   width: 100%;
   border: 1px solid var(--line);
   background: white;
@@ -137,6 +189,7 @@ button, .job-actions a {
 
 .job-card h3 { font-size: 18px; }
 .job-card p { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
+
 .job-meta {
   display: flex;
   gap: 16px;
@@ -185,6 +238,11 @@ button, .job-actions a {
 
 @media (max-width: 900px) {
   .hero {
+    grid-template-columns: 1fr;
+  }
+
+  .mounted-grid,
+  .gpu-status {
     grid-template-columns: 1fr;
   }
 }
