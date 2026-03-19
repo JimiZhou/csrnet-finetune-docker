@@ -69,6 +69,35 @@ def mounted_resources_payload(limit: int = 12):
     }
 
 
+def paged_raw_previews(page: int = 1, size: int = 9):
+    page = max(1, int(page))
+    size = max(1, min(36, int(size)))
+    items = []
+    if RAW_IMAGES_DIR.exists() and RAW_IMAGES_DIR.is_dir():
+        for image_path in iter_image_files(RAW_IMAGES_DIR):
+            rel = image_path.relative_to(RAW_IMAGES_DIR).as_posix()
+            items.append(
+                {
+                    "name": image_path.name,
+                    "relative_path": rel,
+                    "preview_url": f"/api/mounted/raw-preview?rel={rel}",
+                }
+            )
+
+    total = len(items)
+    total_pages = max(1, (total + size - 1) // size)
+    page = min(page, total_pages)
+    start = (page - 1) * size
+    end = start + size
+    return {
+        "items": items[start:end],
+        "page": page,
+        "size": size,
+        "total": total,
+        "total_pages": total_pages,
+    }
+
+
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
     return templates.TemplateResponse(
@@ -97,7 +126,11 @@ def api_job(job_id: str):
 
 @app.get("/api/mounted")
 def api_mounted():
-    return mounted_resources_payload()
+    return {
+        **mounted_resources_payload(limit=0),
+        "uploaded_annotations": job_manager.list_uploaded_annotations(),
+        "uploaded_weights": job_manager.list_uploaded_weights(),
+    }
 
 
 def gpu_status_payload():
@@ -138,7 +171,12 @@ def gpu_status_payload():
 
 @app.get("/api/system")
 def api_system():
-    return {"gpu": gpu_status_payload(), "mounted": mounted_resources_payload(limit=8)}
+    return {"gpu": gpu_status_payload(), "mounted": mounted_resources_payload(limit=0)}
+
+
+@app.get("/api/mounted/raw-previews")
+def api_raw_previews(page: int = Query(1), size: int = Query(9)):
+    return paged_raw_previews(page=page, size=size)
 
 
 @app.get("/api/mounted/raw-preview")
@@ -173,8 +211,12 @@ def api_job_download(job_id: str, kind: str = "best"):
 @app.post("/api/jobs")
 async def create_job(
     name: str = Form(""),
-    annotations_zip: UploadFile = File(...),
+    annotation_source: str = Form("existing"),
+    existing_annotation_name: str = Form(""),
+    annotations_zip: UploadFile | None = File(None),
+    weight_source: str = Form("none"),
     init_weights_name: str = Form(""),
+    init_weights_upload: UploadFile | None = File(None),
     epochs: str = Form("40"),
     batch_size: str = Form("2"),
     train_h: str = Form("544"),
@@ -189,20 +231,58 @@ async def create_job(
     loss_gamma: str = Form("1.2"),
     num_workers: str = Form("2"),
 ):
-    if not annotations_zip.filename.lower().endswith(".zip"):
-        raise HTTPException(status_code=400, detail="annotations_zip must be a .zip file")
     if not RAW_IMAGES_DIR.exists() or not RAW_IMAGES_DIR.is_dir():
         raise HTTPException(status_code=400, detail=f"Mounted raw images dir is unavailable: {RAW_IMAGES_DIR}")
+
+    annotation_source = (annotation_source or "existing").strip().lower()
+    existing_annotation_name = (existing_annotation_name or "").strip()
+    if annotation_source == "upload":
+        if annotations_zip is None or not getattr(annotations_zip, "filename", ""):
+            raise HTTPException(status_code=400, detail="Please upload a new annotations zip")
+        if not annotations_zip.filename.lower().endswith(".zip"):
+            raise HTTPException(status_code=400, detail="annotations_zip must be a .zip file")
+        annotation_path = ""
+    else:
+        if not existing_annotation_name:
+            raise HTTPException(status_code=400, detail="Please choose an uploaded annotations zip")
+        annotation_candidate = (job_manager.annotations_library_dir / Path(existing_annotation_name).name).resolve()
+        annotations_base = job_manager.annotations_library_dir.resolve()
+        if annotations_base not in annotation_candidate.parents and annotation_candidate != annotations_base:
+            raise HTTPException(status_code=400, detail="Invalid annotation selection")
+        if not annotation_candidate.exists():
+            raise HTTPException(status_code=400, detail=f"Selected annotation zip not found: {annotation_candidate.name}")
+        annotation_path = str(annotation_candidate)
+
+    weight_source = (weight_source or "none").strip().lower()
     init_weights_name = (init_weights_name or "").strip()
     init_weights_path = ""
-    if init_weights_name:
-        candidate = (WEIGHTS_DIR / Path(init_weights_name).name).resolve()
-        weights_base = WEIGHTS_DIR.resolve()
+    uploaded_weight = None
+    if weight_source == "mounted":
+        if init_weights_name:
+            candidate = (WEIGHTS_DIR / Path(init_weights_name).name).resolve()
+            weights_base = WEIGHTS_DIR.resolve()
+            if weights_base not in candidate.parents and candidate != weights_base:
+                raise HTTPException(status_code=400, detail="Invalid mounted weight selection")
+            if not candidate.exists():
+                raise HTTPException(status_code=400, detail=f"Selected mounted weight not found: {candidate.name}")
+            init_weights_path = str(candidate)
+    elif weight_source == "uploaded":
+        if not init_weights_name:
+            raise HTTPException(status_code=400, detail="Please choose an uploaded weight")
+        candidate = (job_manager.weights_library_dir / Path(init_weights_name).name).resolve()
+        weights_base = job_manager.weights_library_dir.resolve()
         if weights_base not in candidate.parents and candidate != weights_base:
-            raise HTTPException(status_code=400, detail="Invalid init weight selection")
+            raise HTTPException(status_code=400, detail="Invalid uploaded weight selection")
         if not candidate.exists():
-            raise HTTPException(status_code=400, detail=f"Selected init weight not found: {candidate.name}")
+            raise HTTPException(status_code=400, detail=f"Selected uploaded weight not found: {candidate.name}")
         init_weights_path = str(candidate)
+    elif weight_source == "upload":
+        if init_weights_upload is None or not getattr(init_weights_upload, "filename", ""):
+            raise HTTPException(status_code=400, detail="Please upload a new init weight")
+        weight_name = init_weights_upload.filename.lower()
+        if not (weight_name.endswith(".pth") or weight_name.endswith(".pth.tar") or weight_name.endswith(".pt")):
+            raise HTTPException(status_code=400, detail="init weight must be .pth / .pth.tar / .pt")
+        uploaded_weight = init_weights_upload
 
     params = {
         "epochs": to_number(epochs, 40, int),
@@ -219,13 +299,36 @@ async def create_job(
         "loss_gamma": to_number(loss_gamma, 1.2, float),
         "num_workers": to_number(num_workers, 2, int),
     }
-
-    job = job_manager.create_job(
-        name=name.strip(),
-        annotation_zip=annotations_zip,
-        raw_images_dir=str(RAW_IMAGES_DIR),
-        init_weights=None,
-        init_weights_path=init_weights_path,
-        params=params,
-    )
+    if annotation_source == "upload":
+        job = job_manager.create_job(
+            name=name.strip(),
+            annotation_zip=annotations_zip,
+            raw_images_dir=str(RAW_IMAGES_DIR),
+            init_weights=uploaded_weight,
+            init_weights_path=init_weights_path,
+            params=params,
+        )
+        ann_saved = Path(job["annotation_zip"])
+        library_target = job_manager.annotations_library_dir / ann_saved.name
+        if not library_target.exists():
+            library_target.write_bytes(ann_saved.read_bytes())
+        if uploaded_weight is not None and job.get("init_weights"):
+            saved_weight = Path(job["init_weights"])
+            library_target = job_manager.weights_library_dir / saved_weight.name
+            if not library_target.exists():
+                library_target.write_bytes(saved_weight.read_bytes())
+    else:
+        job = job_manager.create_job_from_existing(
+            name=name.strip(),
+            annotation_zip_path=annotation_path,
+            raw_images_dir=str(RAW_IMAGES_DIR),
+            init_weights=uploaded_weight,
+            init_weights_path=init_weights_path,
+            params=params,
+        )
+        if uploaded_weight is not None and job.get("init_weights"):
+            saved_weight = Path(job["init_weights"])
+            library_target = job_manager.weights_library_dir / saved_weight.name
+            if not library_target.exists():
+                library_target.write_bytes(saved_weight.read_bytes())
     return JSONResponse({"success": True, "job": job})

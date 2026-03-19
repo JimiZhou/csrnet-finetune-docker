@@ -13,15 +13,15 @@
           <p class="eyebrow">Museum Crowd Count Fine-tuning</p>
           <h1>CSRNet Docker Trainer</h1>
           <p class="lede">
-            上传 CVAT Datumaro 标注包，原图和初始化权重从已挂载目录中选择，后台自动构建数据集并执行微调训练。
+            上传 CVAT Datumaro 标注包，原始图像集和初始化权重从已挂载或历史上传内容中选择，后台自动构建数据集并执行微调训练。
           </p>
         </div>
         <div class="hero-note">
           <p>适合不懂部署的使用者：</p>
           <ul>
-            <li>上传标注 zip</li>
-            <li>原图由运维预先挂载</li>
-            <li>初始化权重从挂载目录中选择</li>
+            <li>标注 zip 可复用历史上传，也可上传新的</li>
+            <li>原始图像集由运维预先挂载</li>
+            <li>初始化权重可选历史上传、挂载权重，或重新上传</li>
             <li>自动查看实时日志与模型产物</li>
           </ul>
         </div>
@@ -30,7 +30,7 @@
       <section class="panel system-panel">
         <div class="panel-head">
           <h2>系统状态</h2>
-          <p>显示 GPU 状态、已挂载原图与可用初始化权重。</p>
+          <p>显示 GPU 状态、已挂载原始图像集与可用初始化权重。</p>
         </div>
         <div id="gpu-status" class="gpu-status">加载中...</div>
       </section>
@@ -38,16 +38,18 @@
       <section class="panel mounted-panel">
         <div class="panel-head">
           <h2>已挂载资源</h2>
-          <p>用户不需要手输路径，只需要确认挂载内容并选择基础权重。</p>
+          <p>原始图像集默认不直接展开，点击按钮后在浮窗里按九宫格分页预览。</p>
         </div>
         <div class="mounted-grid">
           <div class="mounted-card">
-            <h3>Raw Images</h3>
+            <h3>原始图像集</h3>
             <p id="raw-meta">加载中...</p>
-            <div id="raw-previews" class="raw-previews"></div>
+            <div class="inline-actions">
+              <button type="button" id="open-preview-btn">查看预览</button>
+            </div>
           </div>
           <div class="mounted-card">
-            <h3>初始化权重</h3>
+            <h3>挂载初始化权重</h3>
             <p id="weights-meta">加载中...</p>
             <ul id="weights-list" class="weights-list"></ul>
           </div>
@@ -57,7 +59,7 @@
       <section class="panel upload-panel">
         <div class="panel-head">
           <h2>创建训练任务</h2>
-          <p>只上传 CVAT Datumaro 1.0 标注 zip；原图目录和基础权重由挂载资源决定。</p>
+          <p>标注 zip 和初始化权重都支持“选择已有”或“重新上传”。</p>
         </div>
         <form id="train-form" class="train-form">
           <label>
@@ -65,17 +67,43 @@
             <input type="text" name="name" placeholder="例如：museum-perspective-v1" />
           </label>
 
-          <label>
-            <span>标注 zip</span>
-            <input type="file" name="annotations_zip" accept=".zip" required />
-          </label>
+          <div class="choice-block">
+            <h3>标注 zip</h3>
+            <div class="choice-row">
+              <label class="radio"><input type="radio" name="annotation_source" value="existing" checked /> 选择已上传</label>
+              <label class="radio"><input type="radio" name="annotation_source" value="upload" /> 上传新的</label>
+            </div>
+            <label id="existing-annotation-wrap">
+              <span>已上传标注 zip</span>
+              <select id="existing_annotation_name" name="existing_annotation_name"></select>
+            </label>
+            <label id="upload-annotation-wrap" class="hidden">
+              <span>上传新的标注 zip</span>
+              <input type="file" name="annotations_zip" accept=".zip" />
+            </label>
+          </div>
 
-          <label>
-            <span>初始化权重</span>
-            <select id="init_weights_name" name="init_weights_name">
-              <option value="">不使用额外权重</option>
-            </select>
-          </label>
+          <div class="choice-block">
+            <h3>初始化权重</h3>
+            <div class="choice-row">
+              <label class="radio"><input type="radio" name="weight_source" value="none" checked /> 不使用</label>
+              <label class="radio"><input type="radio" name="weight_source" value="uploaded" /> 选择已上传</label>
+              <label class="radio"><input type="radio" name="weight_source" value="mounted" /> 选择挂载权重</label>
+              <label class="radio"><input type="radio" name="weight_source" value="upload" /> 上传新的</label>
+            </div>
+            <label id="uploaded-weight-wrap" class="hidden">
+              <span>已上传权重</span>
+              <select id="uploaded_weight_name" name="init_weights_name"></select>
+            </label>
+            <label id="mounted-weight-wrap" class="hidden">
+              <span>挂载权重</span>
+              <select id="mounted_weight_name"></select>
+            </label>
+            <label id="upload-weight-wrap" class="hidden">
+              <span>上传新的权重</span>
+              <input type="file" name="init_weights_upload" accept=".pth,.pt,.pth.tar" />
+            </label>
+          </div>
 
           <details class="advanced">
             <summary>高级训练参数</summary>
@@ -112,41 +140,84 @@
       </section>
     </main>
 
+    <div id="preview-modal" class="modal hidden">
+      <div class="modal-backdrop"></div>
+      <div class="modal-card">
+        <div class="modal-head">
+          <h2>原始图像集预览</h2>
+          <button type="button" id="close-preview-btn">关闭</button>
+        </div>
+        <div id="preview-grid" class="preview-grid"></div>
+        <div class="modal-footer">
+          <button type="button" id="preview-prev-btn">上一页</button>
+          <span id="preview-page-meta">第 1 页</span>
+          <button type="button" id="preview-next-btn">下一页</button>
+        </div>
+      </div>
+    </div>
+
     <script>
       const jobsEl = document.getElementById("jobs");
       const form = document.getElementById("train-form");
       const formStatus = document.getElementById("form-status");
       const rawMetaEl = document.getElementById("raw-meta");
-      const rawPreviewsEl = document.getElementById("raw-previews");
       const weightsMetaEl = document.getElementById("weights-meta");
       const weightsListEl = document.getElementById("weights-list");
-      const weightsSelectEl = document.getElementById("init_weights_name");
+      const mountedWeightSelectEl = document.getElementById("mounted_weight_name");
+      const uploadedWeightSelectEl = document.getElementById("uploaded_weight_name");
+      const existingAnnotationSelectEl = document.getElementById("existing_annotation_name");
       const gpuStatusEl = document.getElementById("gpu-status");
+
+      const existingAnnotationWrap = document.getElementById("existing-annotation-wrap");
+      const uploadAnnotationWrap = document.getElementById("upload-annotation-wrap");
+      const uploadedWeightWrap = document.getElementById("uploaded-weight-wrap");
+      const mountedWeightWrap = document.getElementById("mounted-weight-wrap");
+      const uploadWeightWrap = document.getElementById("upload-weight-wrap");
+
+      const previewModal = document.getElementById("preview-modal");
+      const previewGrid = document.getElementById("preview-grid");
+      const previewPageMeta = document.getElementById("preview-page-meta");
+      const openPreviewBtn = document.getElementById("open-preview-btn");
+      const closePreviewBtn = document.getElementById("close-preview-btn");
+      const previewPrevBtn = document.getElementById("preview-prev-btn");
+      const previewNextBtn = document.getElementById("preview-next-btn");
+
       let selectedJobId = null;
       let selectedJobLog = "";
+      let previewPage = 1;
+      let previewTotalPages = 1;
+
+      function toggleHidden(el, hidden) {
+        el.classList.toggle("hidden", hidden);
+      }
+
+      function syncAnnotationSourceUI() {
+        const source = new FormData(form).get("annotation_source");
+        toggleHidden(existingAnnotationWrap, source !== "existing");
+        toggleHidden(uploadAnnotationWrap, source !== "upload");
+      }
+
+      function syncWeightSourceUI() {
+        const source = new FormData(form).get("weight_source");
+        toggleHidden(uploadedWeightWrap, source !== "uploaded");
+        toggleHidden(mountedWeightWrap, source !== "mounted");
+        toggleHidden(uploadWeightWrap, source !== "upload");
+      }
 
       function renderMounted(data) {
         rawMetaEl.textContent = data.raw_images_ready
           ? `目录：${data.raw_images_dir}，共 ${data.raw_images_count} 张图片`
-          : `原图目录不可用：${data.raw_images_dir}`;
-
-        rawPreviewsEl.innerHTML = "";
-        (data.raw_images_previews || []).forEach((item) => {
-          const card = document.createElement("figure");
-          card.className = "preview-card";
-          card.innerHTML = `
-            <img src="${item.preview_url}" alt="${item.name}" loading="lazy" />
-            <figcaption>${item.relative_path}</figcaption>
-          `;
-          rawPreviewsEl.appendChild(card);
-        });
+          : `原始图像集目录不可用：${data.raw_images_dir}`;
 
         weightsMetaEl.textContent = data.weights_ready
-          ? `目录：${data.weights_dir}，共 ${data.weights.length} 个权重`
-          : `权重目录不可用：${data.weights_dir}`;
+          ? `挂载目录：${data.weights_dir}，共 ${data.weights.length} 个权重`
+          : `挂载权重目录不可用：${data.weights_dir}`;
 
         weightsListEl.innerHTML = "";
-        weightsSelectEl.innerHTML = `<option value="">不使用额外权重</option>`;
+        mountedWeightSelectEl.innerHTML = `<option value="">请选择挂载权重</option>`;
+        uploadedWeightSelectEl.innerHTML = `<option value="">请选择已上传权重</option>`;
+        existingAnnotationSelectEl.innerHTML = `<option value="">请选择已上传标注 zip</option>`;
+
         (data.weights || []).forEach((item) => {
           const li = document.createElement("li");
           li.textContent = item.name;
@@ -155,7 +226,21 @@
           const opt = document.createElement("option");
           opt.value = item.name;
           opt.textContent = item.name;
-          weightsSelectEl.appendChild(opt);
+          mountedWeightSelectEl.appendChild(opt);
+        });
+
+        (data.uploaded_weights || []).forEach((item) => {
+          const opt = document.createElement("option");
+          opt.value = item.name;
+          opt.textContent = item.name;
+          uploadedWeightSelectEl.appendChild(opt);
+        });
+
+        (data.uploaded_annotations || []).forEach((item) => {
+          const opt = document.createElement("option");
+          opt.value = item.name;
+          opt.textContent = item.name;
+          existingAnnotationSelectEl.appendChild(opt);
         });
       }
 
@@ -184,6 +269,36 @@
         if (!resp.ok) return;
         const data = await resp.json();
         renderSystem(data);
+      }
+
+      async function fetchPreviewPage(page = 1) {
+        const resp = await fetch(`/api/mounted/raw-previews?page=${page}&size=9`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        previewPage = data.page;
+        previewTotalPages = data.total_pages;
+        previewGrid.innerHTML = "";
+        (data.items || []).forEach((item) => {
+          const card = document.createElement("figure");
+          card.className = "preview-card";
+          card.innerHTML = `
+            <img src="${item.preview_url}" alt="${item.name}" loading="lazy" />
+            <figcaption>${item.relative_path}</figcaption>
+          `;
+          previewGrid.appendChild(card);
+        });
+        previewPageMeta.textContent = `第 ${previewPage} / ${previewTotalPages} 页，共 ${data.total} 张`;
+        previewPrevBtn.disabled = previewPage <= 1;
+        previewNextBtn.disabled = previewPage >= previewTotalPages;
+      }
+
+      async function openPreviewModal() {
+        previewModal.classList.remove("hidden");
+        await fetchPreviewPage(1);
+      }
+
+      function closePreviewModal() {
+        previewModal.classList.add("hidden");
       }
 
       async function fetchJobs() {
@@ -256,10 +371,35 @@
         });
       }
 
+      form.addEventListener("change", (event) => {
+        if (event.target.name === "annotation_source") {
+          syncAnnotationSourceUI();
+        }
+        if (event.target.name === "weight_source") {
+          syncWeightSourceUI();
+        }
+        if (event.target.id === "mounted_weight_name" && event.target.value) {
+          uploadedWeightSelectEl.value = "";
+        }
+        if (event.target.id === "uploaded_weight_name" && event.target.value) {
+          mountedWeightSelectEl.value = "";
+        }
+      });
+
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
         formStatus.textContent = "正在上传并创建任务...";
         const formData = new FormData(form);
+
+        const weightSource = formData.get("weight_source");
+        if (weightSource === "mounted") {
+          formData.set("init_weights_name", mountedWeightSelectEl.value);
+        } else if (weightSource === "uploaded") {
+          formData.set("init_weights_name", uploadedWeightSelectEl.value);
+        } else {
+          formData.set("init_weights_name", "");
+        }
+
         try {
           const resp = await fetch("/api/jobs", { method: "POST", body: formData });
           const contentType = resp.headers.get("content-type") || "";
@@ -274,12 +414,20 @@
           }
           formStatus.textContent = `任务已创建：${body.job.id}`;
           form.reset();
+          syncAnnotationSourceUI();
+          syncWeightSourceUI();
           await fetchSystem();
           await fetchJobs();
         } catch (error) {
           formStatus.textContent = `创建失败：${error.message || error}`;
         }
       });
+
+      openPreviewBtn.addEventListener("click", openPreviewModal);
+      closePreviewBtn.addEventListener("click", closePreviewModal);
+      previewPrevBtn.addEventListener("click", () => fetchPreviewPage(previewPage - 1));
+      previewNextBtn.addEventListener("click", () => fetchPreviewPage(previewPage + 1));
+      previewModal.querySelector(".modal-backdrop").addEventListener("click", closePreviewModal);
 
       setInterval(async () => {
         try {
@@ -295,6 +443,8 @@
         }
       }, 5000);
 
+      syncAnnotationSourceUI();
+      syncWeightSourceUI();
       fetchSystem();
       fetchJobs();
     </script>

@@ -22,6 +22,11 @@ class JobManager:
     def __init__(self, jobs_root: Path):
         self.jobs_root = jobs_root
         self.jobs_root.mkdir(parents=True, exist_ok=True)
+        self.library_dir = self.jobs_root / "_library"
+        self.annotations_library_dir = self.library_dir / "annotations"
+        self.weights_library_dir = self.library_dir / "weights"
+        self.annotations_library_dir.mkdir(parents=True, exist_ok=True)
+        self.weights_library_dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._jobs: Dict[str, Dict[str, Any]] = {}
         self._queue: "queue.Queue[str]" = queue.Queue()
@@ -58,6 +63,19 @@ class JobManager:
         text = log_path.read_text(encoding="utf-8", errors="ignore")
         return text[-max_chars:]
 
+    def list_uploaded_annotations(self) -> List[Dict[str, str]]:
+        items = []
+        for path in sorted(self.annotations_library_dir.glob("*.zip"), key=lambda p: p.stat().st_mtime, reverse=True):
+            items.append({"name": path.name, "path": str(path)})
+        return items
+
+    def list_uploaded_weights(self) -> List[Dict[str, str]]:
+        items = []
+        for pattern in ("*.pth", "*.pth.tar", "*.pt"):
+            for path in sorted(self.weights_library_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True):
+                items.append({"name": path.name, "path": str(path)})
+        return items
+
     def create_job(
         self,
         *,
@@ -82,6 +100,52 @@ class JobManager:
         init_weights_path = (init_weights_path or "").strip()
         if init_weights_path:
             init_path = Path(init_weights_path)
+        if init_weights and getattr(init_weights, "filename", ""):
+            init_path = uploads_dir / init_weights.filename
+            init_path.write_bytes(init_weights.file.read())
+
+        job = {
+            "id": job_id,
+            "name": name or job_id,
+            "status": "queued",
+            "phase": "queued",
+            "progress": 0,
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+            "annotation_zip": str(ann_path),
+            "raw_images_dir": str(raw_images_dir),
+            "init_weights": str(init_path) if init_path else None,
+            "params": params,
+            "dataset_root": str(job_dir / "dataset"),
+            "model_path": str(job_dir / "models" / f"{job_id}.pth"),
+            "error": "",
+            "result": None,
+        }
+        with self._lock:
+            self._jobs[job_id] = job
+            self._save_state(job)
+        self._queue.put(job_id)
+        return dict(job)
+
+    def create_job_from_existing(
+        self,
+        *,
+        name: str,
+        annotation_zip_path: str,
+        raw_images_dir: str,
+        init_weights,
+        init_weights_path: str,
+        params: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        job_id = datetime.now().strftime("%Y%m%d_%H%M%S_") + uuid.uuid4().hex[:8]
+        job_dir = self.jobs_root / job_id
+        uploads_dir = job_dir / "uploads"
+        logs_dir = job_dir / "logs"
+        uploads_dir.mkdir(parents=True, exist_ok=True)
+        logs_dir.mkdir(parents=True, exist_ok=True)
+
+        ann_path = Path(annotation_zip_path)
+        init_path = Path(init_weights_path) if init_weights_path else None
         if init_weights and getattr(init_weights, "filename", ""):
             init_path = uploads_dir / init_weights.filename
             init_path.write_bytes(init_weights.file.read())
